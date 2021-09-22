@@ -1,0 +1,318 @@
+---
+title: "Data import"
+output: html_notebook
+---
+
+## Set up 
+
+```{r setup, include=FALSE}
+MyDeleteItems<-ls()
+rm(list=MyDeleteItems)
+library(tidyverse)
+library(readxl)
+library(reticulate)
+use_condaenv(condaenv = 'eikon',conda = "/opt/anaconda3/bin/conda", required=TRUE)
+py_run_string('import eikon')
+load('dat.RData')
+
+```
+
+```{python}
+import eikon as ek  # the Eikon Python wrapper package
+import numpy as np  # NumPy
+import pandas as pd  # pandas
+import cufflinks as cf  # Cufflinks
+import configparser as cp
+import pandas as pd
+import datetime as dt
+import dateutil.relativedelta
+import eikon as ek
+```
+
+```{r isinlist}
+# file='~/Dropbox/SMF/OversightCommittee/Davy/QUB Weekly Balances.xlsm'
+# consolidated<-read_excel(file,"Consolidated")
+# Holdings<-consolidated %>%
+#   select(Date,ISIN,SecAbbrv,Name,Quantity) %>%
+#   arrange(Name,Date) %>%
+#   group_by(Name) %>%
+#   summarise(ISIN=last(ISIN),
+#             Invested=first(Date),
+#             Divested=last(Date),
+#             Quantity=last(Quantity)) %>%
+#   drop_na(ISIN)
+#isins<-unique(Holdings$ISIN) %>% trimws() %>% str_replace(" ", "")
+```
+
+
+## Connect to the Eikon API
+
+This requires a local version of the API proxy running.
+[Eikon API information can be found here](https://developers.refinitiv.com/eikon-apis/eikon-data-api)
+
+* For students use: 
+* Username: qmseikon3@qub.ac.uk
+* password: tY69e66x6WXX
+
+
+* For staff use:
+* Username: qmseikon2@qub.ac.uk         
+* Password: QmsStaffMember185
+
+1. turn on API proxy
+```{bash}
+open -F -a 'Eikon API Proxy'
+```
+
+2. Find appropriate RICs for all of the SMF holdings
+
+```{python}
+ek.set_app_id("7d75f6e45b9143ae80d3456648399a429e9391f0")
+#rics_smf=ek.get_symbology(r.isins, from_symbol_type='ISIN', to_symbol_type='RIC')
+```
+Some of the RICS don't match up so request a manual look up in the data item browser on the API app.
+
+```{r missing rics}
+# rics_smf<-py$rics_smf
+# rownames(rics_smf)
+# rics_smf %>% rownames_to_column("ISIN")->rics_smf
+# rics_smf %>% mutate(RIC=flatten_chr(RIC),error=NULL) %>%
+#   filter(ISIN!='GB0008847096')->rics_smf
+# # rics_smf[which(rics_smf$RIC=="NaN"),]$RIC<-c("AML.L","ING.L","QQQ.O","RBTL.X",'INRG.L',"NDXEX.DE","RTWO.L","XDNQ.DE","PAK","N91.L",NA,'PNN.L','RWO.L',"VOD.L","WP^G19",NA)
+# # rics_smf %>% drop_na()->rics_smf
+# # rics_smf$RIC
+# c(rics_smf %>% drop_na() %>% select(RIC) %>% unlist(use.names = F),c("AML.L","ING.L","QQQ.O","RBTL.X",'INRG.L',"NDXEX.DE","RTWO.L","XDNQ.DE","PAK","N91.L",'PNN.L','RWO.L',"VOD.L","WP^G19"))->RICs_full
+# RICs_full[-which(RICs_full=='NaN')]->RICs_full
+```
+
+## Download end of day price data for the first time
+
+```{python, first}
+import time
+from datetime import datetime
+rics=r.RICs_full
+rics
+start='2016-05-02'
+fn = 'eikon_eod_data.csv'
+first = True
+for ric in rics:
+    print(ric)
+    try:
+      d = ek.get_timeseries(ric,  # the RIC
+                             fields='CLOSE',  # the required fields
+                             start_date=start,  # start date
+                            calendar="tradingdays")
+    except:
+      pass
+    else:
+      if first:
+        data = d
+        data.columns = [ric]
+        first = False
+      else:
+        data[ric] = d
+      time.sleep(2)
+data.to_csv(fn)
+```
+```{python, second}
+import time
+from datetime import datetime
+rics=r.RICs_full
+rics
+start="2017-08-12"
+fn = 'eikon_eod_data1.csv'
+first = True
+for ric in rics:
+    print(ric)
+    try:
+      d = ek.get_timeseries(ric,  # the RIC
+                             fields='CLOSE',  # the required fields
+                             start_date=start,calendar='tradingdays')  # start date
+    except:
+      pass
+    else:
+      if first:
+        data1 = d
+        data1.columns = [ric]
+        first = False
+      else:
+        data1[ric] = d
+      time.sleep(2)
+data.to_csv(fn)
+```
+```{python}
+final=data.append(data1)
+```
+
+## Download sector price return indices
+
+The .FT codes only go back a year. But the real time indices (.FTUB) seem to go for longer
+|Sector_IMF|Eikon Code|Name|
+|:--:|:---:|:---:|
+|Health Care|.FTUB2010|FTSE 350 Health Care Price Return GBP Real Time|
+|Financials|.FTUB3020|FTSE 350 Financial Services Price Return GBP Real Time|
+|Materials|.FTUB5010|FTSE 350 Constructions and Materials Price Return GBP Real Time|
+|Information Technology|.FTUB1010|FTSE 350 Technology Price Return GBP Real Time
+
+```{python}
+pr_inx=[,'.FTUB2010','.FTUB3020','.FTUB5010','.FTUB1010','.FTUB5510','.FTUB4020','.FTUB1510','.FTUB3510']
+# pr_inx=['.FTNMX20S','.FTNMX45S','.FTNMX40S','.FTNMX30S','.FTNMX10S','.FTNMX60S','.FTNMX50S','.FTNMX55S','.FTNMX35S','.FTNMX65S']
+# tr_inx=['.TFTNMX20','.TFTNMX45','.TFTNMX40','.TFTNMX30','.TFTNMX10','.TFTNMX60','.TFTNMX50','.TFTNMX55','.TFTNMX35','.TFTNMX65']
+```
+
+
+```{python}
+start='2016-05-02'
+fn = 'eikon_sector_returns.csv'
+import time
+first = True
+for ric in pr_inx:
+    print(ric)
+    d = ek.get_timeseries(ric,  # the RIC
+                             fields='CLOSE',  # the required fields
+                             start_date=start,calendar='tradingdays')  # start date
+                      
+    if first:
+        indices = d
+        indices.columns = [ric]
+        first = False
+    else:
+        indices[ric] = d
+    time.sleep(2)
+data.to_csv(fn)
+
+```
+
+
+```{python}
+start='2016-05-02'
+end='2021-03-30'
+fn = 'eikon_sector_returns1.csv'
+import time
+first = True
+for ric in pr_inx:
+    print(ric)
+    d = ek.get_timeseries(ric,  # the RIC
+                             fields='CLOSE',  # the required fields
+                             start_date=start,end_date=end,calendar='tradingdays')  # start date
+                      
+    if first:
+        indices1 = d
+        indices1.columns = [ric]
+        first = False
+    else:
+        indices1[ric] = d
+    time.sleep(2)
+data.to_csv(fn)
+
+```
+```{python}
+d = ek.get_timeseries('.FTUB2010',  # the RIC
+                             fields='CLOSE',  # the required fields
+                             start_date='2016-05-02',calendar='tradingdays')
+d.describe
+```
+
+```{python}
+data_grid, err = ek.get_data(rics,['TR.CompanyName',"TR.InstrumentName","TR.ISIN","TR.TRBCEconomicSector"])
+```
+```{python}
+indices.head
+```
+
+
+```{r}
+flextable::flextable(py$data_grid %>% drop_na())
+```
+Code to update the portfolio:
+
+```{r prices and sectors}
+py$final ->prices
+py$indices->indices
+save.image(file="dat.RData")
+```
+
+5. turn off API proxy
+
+```{bash}
+sudo shutdown -S 'Eikon API Proxy'
+```
+
+
+```{r portfolio returns}
+py$data_grid %>% drop_na() %>% map_df(unlist)->info
+consolidated %>% 
+  distinct(ISIN,.keep_all = T) %>% 
+  select(ISIN,Sector,Quantity) %>%
+  left_join(info, by="ISIN")->new_info
+
+prices %>% 
+  add_rownames(var = "Date") %>%
+  pivot_longer(-Date, names_to="RIC",values_to="Price") %>%
+  drop_na(Price) %>%
+  left_join(new_info %>% 
+              select(Instrument,Quantity,Sector, `TRBC Economic Sector Name`) %>%
+              rename(RIC=Instrument), by="RIC") %>%
+  mutate(val_gbp=Price*Quantity/100,
+         Date=lubridate::parse_date_time(Date,orders = "ymd")) %>%
+  drop_na(val_gbp) %>%
+  arrange(RIC, Date) %>%
+  group_by(RIC) %>%
+  mutate(pr_rtn=(Price-lag(Price))/lag(Price))->prices_df
+```
+
+
+```{r graph_cum_returns}
+start_date="2019-05-01"
+prices_df %>%
+  filter(Date>lubridate::parse_date_time(start_date,order="ymd")) 
+prices_df %>% 
+  skimr::skim()
+%>%
+  mutate(cum_rtn=cumsum(coalesce(pr_rtn, 0)) + pr_rtn*0) %>%
+  ggplot(aes(y=cum_rtn,x=Date)) +
+  geom_line() +
+  facet_wrap(~RIC)
+```
+
+
+## Point in time FTSE350 constituent list
+The below code builds a point in time FTSE350 constituents list, using leavers and joiners at the end of each month.
+
+```{python eval=FALSE, include=FALSE}
+ic, err = ek.get_data('.FTLC', ['TR.IndexConstituentRIC'])
+lj, err = ek.get_data('.FTLC', 
+                      ['TR.IndexJLConstituentChangeDate',
+                       'TR.IndexJLConstituentRIC.change',
+                       'TR.IndexJLConstituentRIC'],
+                     {'SDate':'0D', 'EDate':'-55M', 'IC':'B'})
+lj['Date']=pd.to_datetime(lj['Date']).dt.date
+lj.sort_values(['Date','Change'],ascending=False,inplace=True)
+dates = [dt.date(2016,4,30)]
+i = 0
+while (dates[0] + dateutil.relativedelta.relativedelta(months=+i+1)) < dt.date.today():
+    dates.append(dates[0] + dateutil.relativedelta.relativedelta(months=+i+1))
+    i = i + 1
+dates.append(dt.date.today())
+df = pd.DataFrame(index=dates, columns=['Index Constituents'])
+ic_list = ic['Constituent RIC'].tolist()
+for i in range(len(dates)):
+    print(str(dates[len(dates)-i-1]))
+    df.at[dates[len(dates)-i-1],'Index Constituents'] = ic_list[:]
+    for j in lj.index:
+        if lj['Date'].loc[j] <= dates[len(dates)-i-1]:
+            if lj['Date'].loc[j] > dates[len(dates)-i-2]:
+                if lj['Change'].loc[j] == 'Joiner':
+                    print('Removing ' + lj['Constituent RIC'].loc[j])
+                    ic_list.remove(lj['Constituent RIC'].loc[j])
+                elif lj['Change'].loc[j] == 'Leaver':
+                    print('Adding ' + lj['Constituent RIC'].loc[j])
+                    ic_list.append(lj['Constituent RIC'].loc[j])
+            else:
+                break
+df.to_csv("~/Dropbox/SMF/OversightCommitte/FTCL_constituents.csv")
+```
+
+
+
+
